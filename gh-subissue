@@ -15,8 +15,9 @@ ${ANSI_BOLD}USAGE:${ANSI_RESET}
   CHILD is the child issue number or URL
 
 ${ANSI_BOLD}FLAGS:${ANSI_RESET}
-  -R, --repo OWNER/REPO   Select another repository using the OWNER/REPO format
-  -h, --help              Show help for command
+  -R, --repo OWNER/REPO  Select another repository using the OWNER/REPO format
+  -f, --force            Replace the existing parent if child is already a sub-issue
+  -h, --help             Show help for command
 
 EOF
 }
@@ -70,6 +71,7 @@ get_repo() {
 }
 
 repo=""
+replace_parent=false
 
 other_args=()
 while [[ $# -gt 0 ]]; do
@@ -81,6 +83,10 @@ while [[ $# -gt 0 ]]; do
         -R | --repo)
             repo="$2"
             shift 2
+            ;;
+        -f | --force)
+            replace_parent=true
+            shift
             ;;
         -*)
             die "Unknown flag: $1"
@@ -118,6 +124,7 @@ gh api "repos/${repo}/issues/${parent_num}/sub_issues" \
     --silent \
     --input - <<EOF
 {
-  "sub_issue_id": $child_id
+  "sub_issue_id": $child_id,
+  "replace_parent": $replace_parent
 }
 EOF
