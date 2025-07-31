@@ -1,35 +1,123 @@
 #!/usr/bin/env bash
 set -e
 
-echo "Hello gh-subissue!"
+ANSI_BOLD=$(tput bold)
+ANSI_RESET=$(tput sgr0)
 
-# Snippets to help get started:
+help() {
+    cat <<EOF
+Assign a child issue to a parent issue.
 
-# Determine if an executable is in the PATH
-# if ! type -p ruby >/dev/null; then
-#   echo "Ruby not found on the system" >&2
-#   exit 1
-# fi
+${ANSI_BOLD}USAGE:${ANSI_RESET}
+  gh subissue [flags] PARENT CHILD
 
-# Pass arguments through to another command
-# gh issue list "$@" -R cli/cli
+  PARENT is the parent issue number or URL
+  CHILD is the child issue number or URL
 
-# Using the gh api command to retrieve and format information
-# QUERY='
-#   query($endCursor: String) {
-#     viewer {
-#       repositories(first: 100, after: $endCursor) {
-#         nodes {
-#           nameWithOwner
-#           stargazerCount
-#         }
-#       }
-#     }
-#   }
-# '
-# TEMPLATE='
-#   {{- range $repo := .data.viewer.repositories.nodes -}}
-#     {{- printf "name: %s - stargazers: %v\n" $repo.nameWithOwner $repo.stargazerCount -}}
-#   {{- end -}}
-# '
-# exec gh api graphql -f query="${QUERY}" --paginate --template="${TEMPLATE}"
+${ANSI_BOLD}FLAGS:${ANSI_RESET}
+  -R, --repo OWNER/REPO   Select another repository using the OWNER/REPO format
+  -h, --help              Show help for command
+
+EOF
+}
+
+die() {
+    echo "$1" >&2
+    exit 1
+}
+
+get_repo_from_issue_url() {
+    local issue_url="$1"
+    if [[ "$issue_url" =~ ^https://github\.com/([^/]+/[^/]+)/issues/[0-9]+$ ]]; then
+        echo "${BASH_REMATCH[1]}"
+    fi
+}
+
+get_issue_number() {
+    local issue="$1"
+
+    if [[ "$issue" =~ ^https://github\.com/[^/]+/[^/]+/issues/([0-9]+)$ ]]; then
+        echo "${BASH_REMATCH[1]}"
+    else
+        echo "$issue"
+    fi
+}
+
+get_repo() {
+    local parent="$1"
+    local child="$2"
+    local parent_repo=""
+    local child_repo=""
+
+    if [[ -n "$parent" ]]; then
+        parent_repo=$(get_repo_from_issue_url "$parent")
+    fi
+    if [[ -n "$child" ]]; then
+        child_repo=$(get_repo_from_issue_url "$child")
+    fi
+
+    if [[ -n "$parent_repo" && -n "$child_repo" && "$parent_repo" != "$child_repo" ]]; then
+        die "Parent and child issues are not in the same repository"
+    fi
+
+    if [[ -n "$parent_repo" ]]; then
+        echo "$parent_repo"
+    elif [[ -n "$child_repo" ]]; then
+        echo "$child_repo"
+    else
+        gh repo view --json nameWithOwner -q .nameWithOwner
+    fi
+}
+
+repo=""
+
+other_args=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h | --help)
+            help
+            exit 0
+            ;;
+        -R | --repo)
+            repo="$2"
+            shift 2
+            ;;
+        -*)
+            die "Unknown flag: $1"
+            ;;
+        *)
+            other_args+=("$1")
+            shift
+            ;;
+    esac
+done
+
+set -- "${other_args[@]}"
+
+if [[ $# -ne 2 ]]; then
+    help
+    die "Parent and child issues are required"
+fi
+
+parent="$1"
+child="$2"
+
+if [[ -z "$repo" ]]; then
+    repo=$(get_repo "$parent" "$child") || die "Could not determine repository"
+fi
+
+child_num=$(get_issue_number "$child")
+parent_num=$(get_issue_number "$parent")
+
+child_id=$(gh api "repos/${repo}/issues/${child_num}" --jq .id)
+
+[[ -n "$child_id" ]] || die "Could not determine child issue ID"
+
+gh api "repos/${repo}/issues/${parent_num}/sub_issues" \
+    --method POST \
+    --silent \
+    --input - <<EOF
+{
+  "sub_issue_id": $child_id
+}
+EOF
